@@ -1,0 +1,22 @@
+[package]
+name = "mod"
+version = "0.1.0"
+authors = ["lcdr"]
+edition = "2018"
+description = "DLL to hook the LU clients' RakNet functions and replace them with code for my new TCP/UDP based protocol."
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+repository = "https://bitbucket.org/lcdr/raknet_shim_dll/"
+
+[dependencies]
+endio = "0.1.0"
+rustls = { version = "0.14.0", features = ["dangerous_configuration"] }
+webpki = "0.18.1"
+webpki-roots = "0.15.0"
+winapi = { version = "0.3.6", features = ["libloaderapi", "memoryapi"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
