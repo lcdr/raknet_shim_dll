@@ -5,7 +5,6 @@ use std::ptr;
 use winapi::shared::minwindef::LPVOID;
 
 use crate::detour::detour;
-use crate::detour::nop;
 use crate::tcpudp::{Connection, RakPacket, REL_ORD};
 
 const RAK_CLOSE_CONNECTION: usize = 0x643e60;
@@ -15,7 +14,6 @@ const RAK_RECEIVE: usize = 0x644610;
 const RAK_SEND: usize = 0x63f540;
 const RAK_SHUTDOWN: usize = 0x641dc0;
 const RAK_STARTUP: usize = 0x645e40;
-const RECEIVE_THROTTLE: usize = 0x7347f4;
 
 const STOP_PROCESSING_AND_DEALLOCATE: u32 = 0;
 const STOP_PROCESSING: u32 = 2;
@@ -144,6 +142,4 @@ pub fn patch_raknet() {
 	detour(RAK_SEND, new_send as LPVOID);
 	detour(RAK_SHUTDOWN, new_shutdown as LPVOID);
 	detour(RAK_STARTUP, new_startup as LPVOID);
-	// doesn't do anything?
-	//nop(RECEIVE_THROTTLE, 6);
 }
