@@ -65,7 +65,7 @@ fn connect(this: usize, host: *const c_char, port: u16, _password: *const c_char
 		drop(b);
 	}
 	let host = unsafe { CStr::from_ptr(host).to_str().unwrap() };
-	let port = if port == 1001 { 1002 } else { port };
+	let port = if port == 1001 { 21836 } else { port };
 	let mut conn = Box::new(Connection::new(host, port)?);
 	conn.send(b"\x043.25 ND1", REL_ORD)?;
 	set_conn(this, Box::into_raw(conn));
