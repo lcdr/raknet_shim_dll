@@ -10,11 +10,11 @@
 
 use std::io;
 use std::io::Result as Res;
-use std::net::{IpAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, TcpStream, UdpSocket};
 
 use endio::LEWrite;
 
-use crate::tls::Tcp;
+use crate::tls::Tls;
 
 const MTU_SIZE: usize = 1228; // set by LU
 const UDP_HEADER_SIZE: usize = 28;
@@ -36,6 +36,24 @@ pub struct RakPacket {
 	delete_data: bool,
 }
 
+trait ReliableTransport: std::io::Read+std::io::Write {
+	fn local_addr(&self) -> Res<SocketAddr>;
+	fn peer_addr(&self) -> Res<SocketAddr>;
+	fn set_nonblocking(&self, nonblocking: bool) -> Res<()>;
+}
+
+impl ReliableTransport for TcpStream {
+	fn local_addr(&self) -> Res<SocketAddr> { self.local_addr() }
+	fn peer_addr(&self) -> Res<SocketAddr> { self.peer_addr() }
+	fn set_nonblocking(&self, nonblocking: bool) -> Res<()> { self.set_nonblocking(nonblocking) }
+}
+
+impl ReliableTransport for Tls {
+	fn local_addr(&self) -> Res<SocketAddr> { self.local_addr() }
+	fn peer_addr(&self) -> Res<SocketAddr> { self.peer_addr() }
+	fn set_nonblocking(&self, nonblocking: bool) -> Res<()> { self.set_nonblocking(nonblocking) }
+}
+
 /// Buffer for keeping packets that were only read in part.
 struct BufferOffset {
 	reading_length: bool,
@@ -45,7 +63,7 @@ struct BufferOffset {
 }
 
 pub struct Connection {
-	tcp: Tcp,
+	tcp: Box<ReliableTransport>,
 	udp: UdpSocket,
 	seq_num_recv: u32,
 	seq_num_send: u32,
@@ -54,7 +72,11 @@ pub struct Connection {
 
 impl Connection {
 	pub fn new(host: &str, port: u16) -> Res<Self> {
-		let tcp = Tcp::connect((host, port))?;
+		let tcp: Box<ReliableTransport> = if host == "localhost" {
+			Box::new(TcpStream::connect((host, port))?)
+		} else {
+			Box::new(Tls::connect((host, port))?)
+		};
 		let udp = UdpSocket::bind(tcp.local_addr()?)?;
 		udp.connect((host, port))?;
 		tcp.set_nonblocking(true)?;

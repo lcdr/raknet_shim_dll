@@ -17,11 +17,11 @@ impl rustls::ServerCertVerifier for NoVerification {
 	}
 }
 
-pub struct Tcp {
+pub struct Tls {
 	stream: rustls::StreamOwned<rustls::ClientSession, TcpStream>,
 }
 
-impl Tcp {
+impl Tls {
 	pub fn connect(addr: (&str, u16)) -> Res<Self> {
 		let (host, port) = addr;
 		let mut config = rustls::ClientConfig::new();
@@ -51,7 +51,7 @@ impl Tcp {
 			}
 		}
 
-		Ok(Tcp { stream } )
+		Ok(Tls { stream } )
 	}
 
 	pub fn local_addr(&self) -> Res<SocketAddr> {
@@ -67,13 +67,13 @@ impl Tcp {
 	}
 }
 
-impl Read for Tcp {
+impl Read for Tls {
 	fn read(&mut self, buf: &mut [u8]) -> Res<usize> {
 		self.stream.read(buf)
 	}
 }
 
-impl Write for Tcp {
+impl Write for Tls {
 	fn write(&mut self, buf: &[u8]) -> Res<usize> {
 		self.stream.write(buf)
 	}
