@@ -16,6 +16,11 @@ use endio::LEWrite;
 
 use crate::tls::Tls;
 
+const ID_INTERNAL_PING: u8 = 0;
+const ID_CONNECTED_PONG: u8 = 3;
+const ID_DISCONNECTION_NOTIFICATION: u8 = 19;
+const ID_CONNECTION_LOST: u8 = 20;
+const PING_INTERVAL: u32 = 5000;
 const MTU_SIZE: usize = 1228; // set by LU
 const UDP_HEADER_SIZE: usize = 28;
 const MAX_PACKET_SIZE: usize = MTU_SIZE - UDP_HEADER_SIZE;
@@ -62,9 +67,22 @@ struct BufferOffset {
 	buffer: Box<[u8]>,
 }
 
+#[derive(PartialEq)]
+enum ConnState {
+	Open,
+	Disconnected,
+	Lost,
+}
+
 pub struct Connection {
 	tcp: Box<ReliableTransport>,
 	udp: UdpSocket,
+	state: ConnState,
+	ping_timer: u32,
+	last_reliable_send_time: u32,
+	last_ping: u32,
+	cum_ping: u32,
+	ping_count: u32,
 	seq_num_recv: u32,
 	seq_num_send: u32,
 	packet: BufferOffset,
@@ -84,14 +102,34 @@ impl Connection {
 		Ok(Connection {
 			tcp,
 			udp,
+			state: ConnState::Open,
+			ping_timer: 0,
+			last_reliable_send_time: 0,
+			last_ping: 0,
+			cum_ping: 0,
+			ping_count: 1,
 			seq_num_recv: 0,
 			seq_num_send: 0,
 			packet: BufferOffset { reading_length: true, offset: 0, length: [0; 4], buffer: Box::new([]) },
 		})
 	}
 
+	pub fn close(&mut self) {
+		self.state = ConnState::Disconnected;
+	}
+
 	/// Send a packet.
 	pub fn send(&mut self, data: &[u8], reliability: u32) -> Res<()> {
+		match self.send_internal(data, reliability) {
+			Ok(()) => Ok(()),
+			Err(e) => {
+				self.state = ConnState::Lost;
+				Err(e)
+			}
+		}
+	}
+
+	fn send_internal(&mut self, data: &[u8], reliability: u32) -> Res<()> {
 		match reliability {
 			UNREL => {
 				let mut vec = Vec::with_capacity(data.len()+1);
@@ -109,6 +147,7 @@ impl Connection {
 				self.udp.send(&vec)?;
 			}
 			_ => {
+				self.last_reliable_send_time = self.ping_timer;
 				self.tcp.write(data.len() as u32)?;
 				std::io::Write::write(&mut self.tcp, data)?;
 			}
@@ -118,6 +157,35 @@ impl Connection {
 
 	/// Try to receive a packet.
 	pub fn receive(&mut self) -> Res<*const RakPacket> {
+		let packet = self.receive_internal();
+		if let Ok(p) = packet {
+			if !p.is_null() {
+				unsafe {
+					if (*(*p).data)[0] == ID_INTERNAL_PING {
+						let _ = self.send_pong(&(*(*p).data)[1..4]);
+					} else if (*(*p).data)[0] == ID_CONNECTED_PONG {
+						let _ = self.on_pong(&(*(*p).data)[1..]);
+					}
+				}
+			}
+		}
+		packet
+	}
+
+	fn receive_internal(&mut self) -> Res<*const RakPacket> {
+		if self.ping_timer - self.last_reliable_send_time > PING_INTERVAL {
+			let _ = self.send_ping();
+		}
+		self.ping_timer = self.ping_timer.wrapping_add(20);
+
+		if self.state == ConnState::Disconnected {
+			self.state = ConnState::Open;
+			return Ok(self.new_rak_packet(Box::new([ID_DISCONNECTION_NOTIFICATION])));
+		} else if self.state == ConnState::Lost {
+			self.state = ConnState::Open;
+			return Ok(self.new_rak_packet(Box::new([ID_CONNECTION_LOST])));
+		}
+
 		match self.receive_tcp() {
 			Ok(packet) => { return Ok(packet); },
 			Err(err) => {
@@ -197,5 +265,41 @@ impl Connection {
 		let mut b = Box::from(&[][..]);
 		std::mem::swap(&mut self.packet.buffer, &mut b);
 		Ok(self.new_rak_packet(b))
+	}
+
+	fn send_ping(&mut self) -> Res<()> {
+		let mut packet = [0; 5];
+		let mut writer = &mut packet[..];
+		writer.write(ID_INTERNAL_PING)?;
+		writer.write(self.ping_timer)?;
+		self.send(&packet, REL_ORD)
+	}
+
+	fn send_pong(&mut self, ping: &[u8]) -> Res<()> {
+		let mut packet = [0; 9];
+		let mut writer = &mut packet[..];
+		writer.write(ID_CONNECTED_PONG)?;
+		std::io::Write::write(&mut writer, ping)?;
+		writer.write(0u32)?;
+		self.send(&packet, REL_ORD)
+	}
+
+	fn on_pong(&mut self, pong: &[u8]) -> Res<()> {
+		use endio::LERead;
+		let reader = &mut &pong[..];
+		let current_time = self.ping_timer;
+		let old_time: u32 = reader.read()?;
+		self.last_ping = current_time - old_time;
+		self.cum_ping += self.last_ping;
+		self.ping_count += 1;
+		Ok(())
+	}
+
+	pub fn last_ping(&self) -> u32 {
+		self.last_ping
+	}
+
+	pub fn average_ping(&self) -> u32 {
+		self.cum_ping / self.ping_count
 	}
 }
