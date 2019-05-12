@@ -18,3 +18,12 @@ pub fn detour(old: usize, new: LPVOID) {
 		VirtualProtect(old, 5, OLD_PROTECT, &mut OLD_PROTECT);
 	}
 }
+
+pub fn patch_byte(dst: usize, new: BYTE) {
+	unsafe {
+		let dst = (dst + BASE) as LPVOID;
+		VirtualProtect(dst, 1, PAGE_EXECUTE_READWRITE, &mut OLD_PROTECT);
+		*(dst as *mut BYTE) = new;
+		VirtualProtect(dst, 1, OLD_PROTECT, &mut OLD_PROTECT);
+	}
+}

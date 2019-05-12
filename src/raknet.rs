@@ -4,16 +4,19 @@ use std::os::raw::{c_char, c_uchar};
 use std::ptr;
 use winapi::shared::minwindef::LPVOID;
 
-use crate::detour::detour;
+use crate::detour::{detour, patch_byte};
 use crate::tcpudp::{Connection, RakPacket, REL_ORD};
 
 const RAK_CLOSE_CONNECTION: usize = 0x643e60;
 const RAK_CONNECT: usize = 0x6409f0;
 const RAK_DEALLOCATE_PACKET: usize = 0x63e6c0;
+const RAK_GET_AVERAGE_PING: usize = 0x640540;
+const RAK_GET_LAST_PING: usize = 0x640500;
 const RAK_RECEIVE: usize = 0x644610;
 const RAK_SEND: usize = 0x63f540;
 const RAK_SHUTDOWN: usize = 0x641dc0;
 const RAK_STARTUP: usize = 0x645e40;
+const CLOSE_CONNECT_PARAM: usize = 0x7332b8;
 
 const STOP_PROCESSING_AND_DEALLOCATE: u32 = 0;
 const STOP_PROCESSING: u32 = 2;
@@ -28,12 +31,16 @@ fn get_conn(this: usize) -> *mut Connection {
 	unsafe { *((this+0xc14) as *mut *mut Connection) }
 }
 
-unsafe extern "thiscall" fn new_close_connection(this: usize, ip: u32, port: u16, _send_notification: bool, _ordering_channel: u8) {
+unsafe extern "thiscall" fn new_close_connection(this: usize, ip: u32, port: u16, send_notification: bool, _ordering_channel: u8) {
 	let conn = get_conn(this);
 	if conn != MTU {
-		let b = Box::from_raw(conn);
-		drop(b);
-		set_conn(this, MTU);
+		if send_notification {
+			(&mut*conn).close();
+		} else {
+			let b = Box::from_raw(conn);
+			drop(b);
+			set_conn(this, MTU);
+		}
 
 		let plugins_len = *((this+0x790) as *const u32);
 		let array_start = *((this+0x78c) as *const u32);
@@ -83,13 +90,23 @@ unsafe extern "thiscall" fn new_deallocate_packet(_this: usize, packet: *const R
 	drop(b);
 }
 
+unsafe extern "thiscall" fn new_get_average_ping(this: usize, _ip: u32, _port: u16) -> u32 {
+	let conn = &*get_conn(this);
+	conn.average_ping()
+}
+
+unsafe extern "thiscall" fn new_get_last_ping(this: usize, _ip: u32, _port: u16) -> u32 {
+	let conn = &*get_conn(this);
+	conn.last_ping()
+}
+
 unsafe extern "thiscall" fn new_receive(this: usize) -> *const RakPacket {
-	let tcpudp = get_conn(this);
-	if tcpudp == MTU {
+	let conn = get_conn(this);
+	if conn == MTU {
 		return ptr::null();
 	}
-	let tcpudp = &mut*tcpudp;
-	match tcpudp.receive() {
+	let conn = &mut*conn;
+	match conn.receive() {
 		Ok(packet) => {
 			if !packet.is_null() {
 				let plugins_len = *((this+0x790) as *const u32);
@@ -116,12 +133,12 @@ unsafe extern "thiscall" fn new_receive(this: usize) -> *const RakPacket {
 }
 
 unsafe extern "thiscall" fn new_send(this: usize, data: *const c_uchar, len: u32, _priority: u32, reliability: u32, _ordering_channel: u8, _ip: u32, _port: u16, _broadcast: bool) -> bool {
-	let tcpudp = get_conn(this);
-	if tcpudp == MTU {
+	let conn = get_conn(this);
+	if conn == MTU {
 		return false;
 	}
-	let tcpudp = &mut*tcpudp;
-	match tcpudp.send(std::slice::from_raw_parts(data, len as usize), reliability) {
+	let conn = &mut*conn;
+	match conn.send(std::slice::from_raw_parts(data, len as usize), reliability) {
 		Ok(()) => true,
 		Err(e) => {dbg!(e); false }
 	}
@@ -138,8 +155,11 @@ pub fn patch_raknet() {
 	detour(RAK_CLOSE_CONNECTION, new_close_connection as LPVOID);
 	detour(RAK_CONNECT, new_connect as LPVOID);
 	detour(RAK_DEALLOCATE_PACKET, new_deallocate_packet as LPVOID);
+	detour(RAK_GET_AVERAGE_PING, new_get_average_ping as LPVOID);
+	detour(RAK_GET_LAST_PING, new_get_last_ping as LPVOID);
 	detour(RAK_RECEIVE, new_receive as LPVOID);
 	detour(RAK_SEND, new_send as LPVOID);
 	detour(RAK_SHUTDOWN, new_shutdown as LPVOID);
 	detour(RAK_STARTUP, new_startup as LPVOID);
+	patch_byte(CLOSE_CONNECT_PARAM, 0);
 }
