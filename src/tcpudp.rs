@@ -75,7 +75,7 @@ enum ConnState {
 }
 
 pub struct Connection {
-	tcp: Box<ReliableTransport>,
+	tcp: Box<dyn ReliableTransport>,
 	udp: UdpSocket,
 	state: ConnState,
 	ping_timer: u32,
@@ -90,7 +90,7 @@ pub struct Connection {
 
 impl Connection {
 	pub fn new(host: &str, port: u16) -> Res<Self> {
-		let tcp: Box<ReliableTransport> = if host == "localhost" || host == "127.0.0.1" {
+		let tcp: Box<dyn ReliableTransport> = if host == "localhost" || host == "127.0.0.1" {
 			Box::new(TcpStream::connect((host, port))?)
 		} else {
 			Box::new(Tls::connect((host, port))?)
