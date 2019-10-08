@@ -10,7 +10,7 @@
 
 use std::io;
 use std::io::Result as Res;
-use std::net::{IpAddr, SocketAddr, TcpStream, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
 
 use endio::LEWrite;
 
@@ -208,9 +208,15 @@ impl Connection {
 	fn new_rak_packet(&self, data: Box<[u8]>) -> *const RakPacket {
 		let peer_addr = self.tcp.peer_addr().unwrap();
 		let ip = match peer_addr.ip() {
-			IpAddr::V4(ip) => ip.octets(),
-			_ => panic!(),
-		};
+			IpAddr::V4(ip) => ip,
+			IpAddr::V6(ip) => {
+				if ip.is_loopback() {
+					Ipv4Addr::LOCALHOST
+				} else {
+					panic!()
+				}
+			}
+		}.octets();
 
 		Box::into_raw(Box::new(RakPacket {
 			system_index: 0,
@@ -250,6 +256,9 @@ impl Connection {
 		if self.packet.reading_length {
 			while self.packet.offset < self.packet.length.len() {
 				let n = self.tcp.read(&mut self.packet.length[self.packet.offset..])?;
+				if n == 0 {
+					return Err(io::Error::new(io::ErrorKind::WouldBlock, "read zero"));
+				}
 				self.packet.offset += n;
 			}
 			self.packet.reading_length = false;
