@@ -70,6 +70,7 @@ fn connect(this: usize, host: *const c_char, port: u16, _password: *const c_char
 	if conn != MTU {
 		let b = unsafe { Box::from_raw(conn) };
 		drop(b);
+		set_conn(this, MTU);
 	}
 	let host = unsafe { CStr::from_ptr(host).to_str().unwrap() };
 	let port = if port == 1001 { 21836 } else { port };
