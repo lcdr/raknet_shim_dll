@@ -6,7 +6,7 @@ edition = "2018"
 description = "DLL to hook the LU clients' RakNet functions and replace them with code for my new TCP/UDP based protocol."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
-repository = "https://bitbucket.org/lcdr/raknet_shim_dll/"
+repository = "https://github.com/lcdr/raknet_shim_dll/"
 
 [dependencies]
 endio = "0.1.0"
