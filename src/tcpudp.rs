@@ -18,6 +18,8 @@ use crate::tls::Tls;
 
 const ID_INTERNAL_PING: u8 = 0;
 const ID_CONNECTED_PONG: u8 = 3;
+const ID_CONNECTION_REQUEST_ACCEPTED: u8 = 14;
+const ID_NEW_INCOMING_CONNECTION: u8 = 17;
 const ID_DISCONNECTION_NOTIFICATION: u8 = 19;
 const ID_CONNECTION_LOST: u8 = 20;
 const PING_INTERVAL: u32 = 5000;
@@ -162,9 +164,11 @@ impl Connection {
 			if !p.is_null() {
 				unsafe {
 					if (*(*p).data)[0] == ID_INTERNAL_PING {
-						let _ = self.send_pong(&(*(*p).data)[1..4]);
+						let _ = self.on_ping(&(*(*p).data)[1..4]);
 					} else if (*(*p).data)[0] == ID_CONNECTED_PONG {
 						let _ = self.on_pong(&(*(*p).data)[1..]);
+					} else if (*(*p).data)[0] == ID_CONNECTION_REQUEST_ACCEPTED {
+						let _ = self.on_conn_req_acc(&(*(*p).data)[1..]);
 					}
 				}
 			}
@@ -284,7 +288,7 @@ impl Connection {
 		self.send(&packet, REL_ORD)
 	}
 
-	fn send_pong(&mut self, ping: &[u8]) -> Res<()> {
+	fn on_ping(&mut self, ping: &[u8]) -> Res<()> {
 		let mut packet = [0; 9];
 		let mut writer = &mut packet[..];
 		writer.write(ID_CONNECTED_PONG)?;
@@ -302,6 +306,40 @@ impl Connection {
 		self.cum_ping += self.last_ping;
 		self.ping_count += 1;
 		Ok(())
+	}
+
+	fn on_conn_req_acc(&mut self, _cra: &[u8]) -> Res<()> {
+		let peer_addr = self.tcp.peer_addr().unwrap();
+		let peer_ip = match peer_addr.ip() {
+			IpAddr::V4(ip) => ip,
+			IpAddr::V6(ip) => {
+				if ip.is_loopback() {
+					Ipv4Addr::LOCALHOST
+				} else {
+					panic!()
+				}
+			}
+		}.octets();
+		let local_addr = self.tcp.local_addr().unwrap();
+		let local_ip = match local_addr.ip() {
+			IpAddr::V4(ip) => ip,
+			IpAddr::V6(ip) => {
+				if ip.is_loopback() {
+					Ipv4Addr::LOCALHOST
+				} else {
+					panic!()
+				}
+			}
+		}.octets();
+
+		let mut packet = [0; 13];
+		let mut writer = &mut packet[..];
+		writer.write(ID_NEW_INCOMING_CONNECTION)?;
+		writer.write(&peer_ip[..])?;
+		writer.write(peer_addr.port())?;
+		writer.write(&local_ip[..])?;
+		writer.write(local_addr.port())?;
+		self.send(&packet, REL_ORD)
 	}
 
 	pub fn last_ping(&self) -> u32 {
