@@ -136,21 +136,21 @@ impl Connection {
 		// right now the UDP association is port-based, so when the port is changed we lose the UDP packets
 		// need to construct a handshake that associates UDP by a token shared via TCP, or similar
 		match reliability {
-			UNREL => {
-				/*let mut vec = Vec::with_capacity(data.len()+1);
+			/*UNREL => {
+				let mut vec = Vec::with_capacity(data.len()+1);
 				vec.write(UNREL as u8)?;
 				vec.write(data)?;
-				self.udp.send(&vec)?;*/
+				self.udp.send(&vec)?;
 			}
 			UNREL_SEQ => {
-				/*let seq_num = self.seq_num_send;
+				let seq_num = self.seq_num_send;
 				self.seq_num_send = self.seq_num_send.wrapping_add(1);
 				let mut vec = Vec::with_capacity(data.len()+1+4);
 				vec.write(UNREL_SEQ as u8)?;
 				vec.write(seq_num)?;
 				vec.write(data)?;
-				self.udp.send(&vec)?;*/
-			}
+				self.udp.send(&vec)?;
+			}*/
 			_ => {
 				self.last_reliable_send_time = self.ping_timer;
 				self.tcp.write(data.len() as u32)?;

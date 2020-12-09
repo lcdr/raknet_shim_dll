@@ -6,24 +6,24 @@ use crate::BASE;
 
 const JMP_OPCODE: u8 = 0xE9;
 
-static mut OLD_PROTECT: DWORD = PAGE_EXECUTE_READWRITE;
-
 pub fn detour(old: usize, new: LPVOID) {
 	unsafe {
 		let old = (old + BASE) as LPVOID;
 		let jmp_distance: DWORD = new as DWORD - old as DWORD - 5;
-		VirtualProtect(old, 5, PAGE_EXECUTE_READWRITE, &mut OLD_PROTECT);
+		let mut old_protect: DWORD = PAGE_EXECUTE_READWRITE;
+		VirtualProtect(old, 5, PAGE_EXECUTE_READWRITE, &mut old_protect);
 		*(old as *mut BYTE) = JMP_OPCODE;
 		*(((old as usize)+1) as *mut DWORD) = jmp_distance;
-		VirtualProtect(old, 5, OLD_PROTECT, &mut OLD_PROTECT);
+		VirtualProtect(old, 5, old_protect, &mut old_protect);
 	}
 }
 
 pub fn patch_byte(dst: usize, new: BYTE) {
 	unsafe {
 		let dst = (dst + BASE) as LPVOID;
-		VirtualProtect(dst, 1, PAGE_EXECUTE_READWRITE, &mut OLD_PROTECT);
+		let mut old_protect: DWORD = PAGE_EXECUTE_READWRITE;
+		VirtualProtect(dst, 1, PAGE_EXECUTE_READWRITE, &mut old_protect);
 		*(dst as *mut BYTE) = new;
-		VirtualProtect(dst, 1, OLD_PROTECT, &mut OLD_PROTECT);
+		VirtualProtect(dst, 1, old_protect, &mut old_protect);
 	}
 }
