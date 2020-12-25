@@ -72,8 +72,14 @@ fn connect(this: usize, host: *const c_char, port: u16, _password: *const c_char
 		drop(b);
 		set_conn(this, MTU);
 	}
-	let host = unsafe { CStr::from_ptr(host).to_str().unwrap() };
-	let port = if port == 1001 { 21836 } else { port };
+	let mut host = unsafe { CStr::from_ptr(host).to_str().unwrap() };
+	let mut host_port = 21836;
+	if host.find(':') != None {
+		let split_host_name: Vec<&str> = host.split(':').collect();
+		host = split_host_name[0];
+		host_port = split_host_name[1].parse::<u16>().unwrap();
+	}
+	let port = if port == 1001 { host_port } else { port };
 	let mut conn = Box::new(Connection::new(host, port)?);
 	conn.send(b"\x043.25 ND1", REL_ORD)?;
 	set_conn(this, Box::into_raw(conn));
