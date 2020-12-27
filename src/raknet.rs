@@ -74,10 +74,10 @@ fn connect(this: usize, host: *const c_char, port: u16, _password: *const c_char
 	}
 	let mut host = unsafe { CStr::from_ptr(host).to_str().unwrap() };
 	let mut host_port = 21836;
-	if host.find(':') != None {
-		let split_host_name: Vec<&str> = host.split(':').collect();
-		host = split_host_name[0];
-		host_port = split_host_name[1].parse::<u16>().unwrap();
+	if let Some(index) = host.find(":") {
+		let (h, p) = host.split_at(index);
+		host = h;
+		host_port = p[1..].parse().unwrap();
 	}
 	let port = if port == 1001 { host_port } else { port };
 	let mut conn = Box::new(Connection::new(host, port)?);
