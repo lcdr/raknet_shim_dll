@@ -268,9 +268,13 @@ impl Connection {
 				}
 				self.packet.offset += n;
 			}
-			self.packet.reading_length = false;
 			self.packet.offset = 0;
-			self.packet.buffer = vec![0; u32::from_le_bytes(self.packet.length) as usize].into_boxed_slice();
+			let packet_length = u32::from_le_bytes(self.packet.length) as usize;
+			if packet_length == 0 {
+				return Err(io::Error::new(io::ErrorKind::WouldBlock, "packet length zero"));
+			}
+			self.packet.reading_length = false;
+			self.packet.buffer = vec![0; packet_length].into_boxed_slice();
 		}
 		while self.packet.offset < self.packet.buffer.len() {
 			let n = self.tcp.read(&mut self.packet.buffer[self.packet.offset..])?;
