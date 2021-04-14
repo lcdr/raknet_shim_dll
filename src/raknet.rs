@@ -1,4 +1,5 @@
 use std::ffi::CStr;
+use std::io::ErrorKind;
 use std::io::Result as Res;
 use std::os::raw::{c_char, c_uchar};
 use std::ptr;
@@ -17,6 +18,9 @@ const RAK_SEND: usize = 0x63f540;
 const RAK_SHUTDOWN: usize = 0x641dc0;
 const RAK_STARTUP: usize = 0x645e40;
 const CLOSE_CONNECT_PARAM: usize = 0x7332b8;
+
+const ID_DISCONNECTION_NOTIFICATION: u8 = 19;
+const ID_CONNECTION_LOST: u8 = 20;
 
 const STOP_PROCESSING_AND_DEALLOCATE: u32 = 0;
 const STOP_PROCESSING: u32 = 2;
@@ -58,10 +62,7 @@ unsafe extern "thiscall" fn new_close_connection(this: usize, ip: u32, port: u16
 extern "thiscall" fn new_connect(this: usize, host: *const c_char, port: u16, password: *const c_char, password_len: u32, socket_index: u32) -> bool {
 	match connect(this, host, port, password, password_len, socket_index) {
 		Ok(()) => true,
-		Err(e) => {
-			dbg!(e);
-			false
-		}
+		Err(e) => { dbg!(e); false }
 	}
 }
 
@@ -135,7 +136,21 @@ unsafe extern "thiscall" fn new_receive(this: usize) -> *const RakPacket {
 			}
 			packet
 		},
-		_ => ptr::null(),
+		Err(e) => {
+			dbg!(&e);
+			let packet = conn.new_rak_packet(Box::new([
+				if e.kind() == ErrorKind::BrokenPipe {
+					ID_DISCONNECTION_NOTIFICATION
+				} else {
+					ID_CONNECTION_LOST
+				}
+			]));
+
+			let b = Box::from_raw(conn);
+			drop(b);
+			set_conn(this, MTU);
+			packet
+		},
 	}
 }
 

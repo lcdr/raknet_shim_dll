@@ -21,7 +21,6 @@ const ID_CONNECTED_PONG: u8 = 3;
 const ID_CONNECTION_REQUEST_ACCEPTED: u8 = 14;
 const ID_NEW_INCOMING_CONNECTION: u8 = 17;
 const ID_DISCONNECTION_NOTIFICATION: u8 = 19;
-const ID_CONNECTION_LOST: u8 = 20;
 const PING_INTERVAL: u32 = 5000;
 const MTU_SIZE: usize = 1228; // set by LU
 const UDP_HEADER_SIZE: usize = 28;
@@ -69,17 +68,11 @@ struct BufferOffset {
 	buffer: Box<[u8]>,
 }
 
-#[derive(PartialEq)]
-enum ConnState {
-	Open,
-	Disconnected,
-	Lost,
-}
-
 pub struct Connection {
 	tcp: Box<dyn ReliableTransport>,
 	udp: UdpSocket,
-	state: ConnState,
+	tcp_peer_addr: SocketAddr,
+	last_error: Option<io::Error>,
 	ping_timer: u32,
 	last_reliable_send_time: u32,
 	last_ping: u32,
@@ -101,10 +94,12 @@ impl Connection {
 		udp.connect((host, port))?;
 		tcp.set_nonblocking(true)?;
 		udp.set_nonblocking(true)?;
+		let tcp_peer_addr = tcp.peer_addr()?;
 		Ok(Connection {
 			tcp,
 			udp,
-			state: ConnState::Open,
+			tcp_peer_addr,
+			last_error: None,
 			ping_timer: 0,
 			last_reliable_send_time: 0,
 			last_ping: 0,
@@ -117,7 +112,10 @@ impl Connection {
 	}
 
 	pub fn close(&mut self) {
-		self.state = ConnState::Disconnected;
+		if let Err(e) = self.send(&[ID_DISCONNECTION_NOTIFICATION], REL_ORD) {
+			dbg!(e);
+		}
+		self.last_error = Some(io::Error::new(io::ErrorKind::BrokenPipe, "connection closed by ourselves"));
 	}
 
 	/// Send a packet.
@@ -125,7 +123,7 @@ impl Connection {
 		match self.send_internal(data, reliability) {
 			Ok(()) => Ok(()),
 			Err(e) => {
-				self.state = ConnState::Lost;
+				self.last_error = Some(e.kind().into());
 				Err(e)
 			}
 		}
@@ -180,18 +178,14 @@ impl Connection {
 	}
 
 	fn receive_internal(&mut self) -> Res<*const RakPacket> {
+		if let Some(e) = &self.last_error {
+			return Err(e.kind().into());
+		}
+
 		if self.ping_timer - self.last_reliable_send_time > PING_INTERVAL {
 			let _ = self.send_ping();
 		}
 		self.ping_timer = self.ping_timer.wrapping_add(20);
-
-		if self.state == ConnState::Disconnected {
-			self.state = ConnState::Open;
-			return Ok(self.new_rak_packet(Box::new([ID_DISCONNECTION_NOTIFICATION])));
-		} else if self.state == ConnState::Lost {
-			self.state = ConnState::Open;
-			return Ok(self.new_rak_packet(Box::new([ID_CONNECTION_LOST])));
-		}
 
 		match self.receive_tcp() {
 			Ok(packet) => { return Ok(packet); },
@@ -212,8 +206,8 @@ impl Connection {
 		Ok(std::ptr::null())
 	}
 
-	fn new_rak_packet(&self, data: Box<[u8]>) -> *const RakPacket {
-		let peer_addr = self.tcp.peer_addr().unwrap();
+	pub fn new_rak_packet(&self, data: Box<[u8]>) -> *const RakPacket {
+		let peer_addr = self.tcp_peer_addr;
 		let ip = match peer_addr.ip() {
 			IpAddr::V4(ip) => ip,
 			IpAddr::V6(ip) => {
@@ -244,12 +238,12 @@ impl Connection {
 		let reader = unsafe { &mut &BUF[..] };
 		let rel: u8 = reader.read()?;
 		if rel == 0 {
-			Ok(unsafe { self.new_rak_packet(Box::from(&BUF[1..len])) } )
+			Ok(self.new_rak_packet(Box::from(unsafe { &BUF[1..len] })))
 		} else if rel == 1 {
 			let seq_num: u32 = reader.read()?;
 			if seq_num.wrapping_sub(self.seq_num_recv) < u32::max_value() / 2 {
 				self.seq_num_recv = seq_num.wrapping_add(1);
-				Ok(unsafe { self.new_rak_packet(Box::from(&BUF[5..len])) } )
+				Ok(self.new_rak_packet(Box::from(unsafe { &BUF[5..len] })))
 			} else {
 				Err(io::Error::new(io::ErrorKind::WouldBlock, "older sequenced packet"))
 			}
@@ -316,8 +310,7 @@ impl Connection {
 	}
 
 	fn on_conn_req_acc(&mut self, _cra: &[u8]) -> Res<()> {
-		let peer_addr = self.tcp.peer_addr().unwrap();
-		let peer_ip = match peer_addr.ip() {
+		let peer_ip = match self.tcp_peer_addr.ip() {
 			IpAddr::V4(ip) => ip,
 			IpAddr::V6(ip) => {
 				if ip.is_loopback() {
@@ -327,7 +320,7 @@ impl Connection {
 				}
 			}
 		}.octets();
-		let local_addr = self.tcp.local_addr().unwrap();
+		let local_addr = self.tcp.local_addr()?;
 		let local_ip = match local_addr.ip() {
 			IpAddr::V4(ip) => ip,
 			IpAddr::V6(ip) => {
@@ -343,7 +336,7 @@ impl Connection {
 		let mut writer = &mut packet[..];
 		writer.write(ID_NEW_INCOMING_CONNECTION)?;
 		writer.write(&peer_ip[..])?;
-		writer.write(peer_addr.port())?;
+		writer.write(self.tcp_peer_addr.port())?;
 		writer.write(&local_ip[..])?;
 		writer.write(local_addr.port())?;
 		self.send(&packet, REL_ORD)
